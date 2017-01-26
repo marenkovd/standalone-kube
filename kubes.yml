@@ -1,0 +1,62 @@
+- name: install dummy kubes on coreos
+  hosts: coreos
+  serial: 1
+  gather_facts: False
+  vars:
+    ssl_path: '/etc/kubernetes/ssl'
+    ssl_ca_cert: 'ca.pem'
+    ssl_api_key: 'api-key.pem'
+    ssl_api_cert: 'api.pem'
+  roles:
+    - defunctzombie.coreos-bootstrap
+  tasks:
+    - name: generate ssl for kubes
+      local_action: command ./generate_ssl.sh {{ ansible_ssh_host }}
+    
+    - name: create kubernetes ssl directory
+      file: path={{ ssl_path }} state=directory
+      become: true
+
+    - name: upload CA certificate
+      copy:
+        src: ./{{ ssl_ca_cert }}
+        dest: "{{ ssl_path }}/{{ ssl_ca_cert }}"
+      become: true
+    - name: upload api server key
+      copy:
+        src: ./{{ ssl_api_key }}
+        dest: "{{ ssl_path }}/{{ ssl_api_key }}"
+        mode: 0600
+      become: true
+    - name: upload api server cert
+      copy:
+        src: ./{{ ssl_api_cert }}
+        dest: "{{ ssl_path }}/{{ ssl_api_cert }}"
+      become: true
+
+    - name: generate cloud-config.yaml
+      local_action: command ./generate_cc.py {{ ansible_ssh_host }} cloud-config.yaml.template cloud-config.yaml
+      become: false
+
+    - name: upload cloud-config.yaml
+      copy:
+        src: ./cloud-config.yaml
+        dest: /home/core/cloud-config.yaml
+
+    - name: run cloud-config
+      shell: coreos-cloudinit --from-file=/home/core/cloud-config.yaml
+      become: true
+    
+    - name: download kubectl
+      shell: curl -O https://storage.googleapis.com/kubernetes-release/release/v1.5.2/bin/linux/amd64/kubectl
+      
+    - name: make kubectl exec
+      shell: chmod +x kubectl
+      
+    - name: Enable scheduling for kube
+      shell: ./kubectl patch node {{ ansible_ssh_host }}  -p '{"spec":{"unschedulable":false}}' 
+      register: task_result
+      until: task_result.rc == 0
+      retries: 10
+      delay: 10
+      ignore_errors: yes
